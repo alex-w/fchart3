@@ -682,7 +682,7 @@ class GeodesicStarGaiaCatalog():
         zones.sort(key=lambda z: (z.level, z.zone))
         return [{"level": z.level, "zone": z.zone, "kind": z.kind} for z in zones]
 
-    def select_zone_stars(self, field_center, radius, lm_stars, level, zone, precession_matrix):
+    def select_zone_stars(self, level, zone, precession_matrix):
         if level < 0 or level >= len(self._cat_components):
             return None
         max_zone = GeodesicGrid.nr_of_zones(level)
@@ -690,10 +690,7 @@ class GeodesicStarGaiaCatalog():
             return None
 
         zone_stars = self._cat_components[level].get_zone_stars(zone)
-        rect_stars = self._select_stars_from_zone_mag(zone_stars, lm_stars)
-        if rect_stars is None or len(rect_stars) == 0:
-            return []
-        return self._rect_to_eq_stars(rect_stars, precession_matrix)
+        return self._rect_to_eq_stars(zone_stars, precession_matrix)
 
     def select_stars(self, field_center, radius, lm_stars, precession_matrix):
         """
