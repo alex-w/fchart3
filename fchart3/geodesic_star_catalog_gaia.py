@@ -16,6 +16,7 @@
 #    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 import glob
+import threading
 from dataclasses import dataclass
 
 from .astro.astrocalc import *
@@ -428,6 +429,7 @@ class GeodesicStarGaiaCatalogComponent:
         self._file_opened = False
         self._nr_of_zones = 0
         self._star_blocks = None
+        self._zone_lock = threading.RLock()
         self.star_position_scale = 0.0
         self.triangle_size = 0.0
 
@@ -490,30 +492,34 @@ class GeodesicStarGaiaCatalogComponent:
     def get_zone_stars(self, zone):
         if not self._file_opened:
             return None
-        zone_stars = self._star_blocks[zone]
-        if zone_stars is None:
-            records = self._data_reader.get_record_count(zone)
-            if records > 0:
-                data_file = self._data_reader.file
-                data_file.seek(self._data_reader.get_offset(zone))
-                zone_stars = np.fromfile(data_file, self._get_data_format(), records)
+        with self._zone_lock:
+            zone_stars = self._star_blocks[zone]
+            if zone_stars is None:
+                records = self._data_reader.get_record_count(zone)
+                if records > 0:
+                    # One component uses one shared file handle. Keep seek/read atomic
+                    # against concurrent access from other threads.
+                    data_file = self._data_reader.file
+                    data_file.seek(self._data_reader.get_offset(zone))
+                    zone_stars = np.fromfile(data_file, self._get_data_format(), records)
 
-                if self._data_reader.byteswap:
-                    zone_stars.byteswap(inplace=True)
+                    if self._data_reader.byteswap:
+                        zone_stars.byteswap(inplace=True)
 
-                zone_stars = self._convert_zone_stars(zone_stars)
-            else:
-                zone_stars = []
+                    zone_stars = self._convert_zone_stars(zone_stars)
+                else:
+                    zone_stars = []
 
-            self._star_blocks[zone] = zone_stars
+                self._star_blocks[zone] = zone_stars
 
-        return zone_stars
+            return zone_stars
 
     def free_mem(self):
         if not self._file_opened:
             return
-        for i in range(len(self._star_blocks)):
-            self._star_blocks[i] = None
+        with self._zone_lock:
+            for i in range(len(self._star_blocks)):
+                self._star_blocks[i] = None
 
 
 @dataclass(frozen=True)
@@ -549,13 +555,21 @@ class GeodesicStarGaiaCatalog():
         self._max_geodesic_grid_level = self._cat_components[-1].level
         self._geodesic_grid = GeodesicGrid(self._max_geodesic_grid_level)
         self._geodesic_grid.visit_triangles(self._max_geodesic_grid_level, self.init_triangle)
-
-        self.search_result = GeodesicSearchResult(self._max_geodesic_grid_level)
+        self._thread_local = threading.local()
 
         if len(self._cat_components) > 0:
             self._cat_components[0].load_static_stars()
 
         # print("#################### Geodesic star catalog within {} s".format(str(time()-tm)), flush=True)
+
+    def _get_thread_search_result(self):
+        search_result = getattr(self._thread_local, 'search_result', None)
+        if search_result is None or search_result.max_level != self._max_geodesic_grid_level:
+            search_result = GeodesicSearchResult(self._max_geodesic_grid_level)
+            self._thread_local.search_result = search_result
+        else:
+            search_result.reset()
+        return search_result
 
     def _load_gsc_component(self, data_dir, file_regex):
         files = glob.glob(os.path.join(data_dir, file_regex))
@@ -647,13 +661,13 @@ class GeodesicStarGaiaCatalog():
         cos_radius = math.cos(radius)
         lev_spherical_caps = self._build_search_caps(field_rect3, radius, max_search_level)
 
-        self.search_result.reset()
-        self._geodesic_grid.search_zones(lev_spherical_caps, self.search_result, max_search_level)
+        search_result = self._get_thread_search_result()
+        self._geodesic_grid.search_zones(lev_spherical_caps, search_result, max_search_level)
 
         zones = []
         seen = set()
         for lev in range(max_search_level + 1):
-            inside_iterator = GeodesicSearchInsideIterator(self.search_result, lev)
+            inside_iterator = GeodesicSearchInsideIterator(search_result, lev)
             zone = inside_iterator.next()
             while zone != -1:
                 key = (lev, int(zone))
@@ -662,7 +676,7 @@ class GeodesicStarGaiaCatalog():
                     seen.add(key)
                 zone = inside_iterator.next()
 
-            border_iterator = GeodesicSearchBorderIterator(self.search_result, lev)
+            border_iterator = GeodesicSearchBorderIterator(search_result, lev)
             zone = border_iterator.next()
             while zone != -1:
                 key = (lev, int(zone))
@@ -708,18 +722,18 @@ class GeodesicStarGaiaCatalog():
             cos_radius = math.cos(radius)
             lev_spherical_caps = self._build_search_caps(field_rect3, radius, max_search_level)
 
-            self.search_result.reset()
-            self._geodesic_grid.search_zones(lev_spherical_caps, self.search_result, max_search_level)
+            search_result = self._get_thread_search_result()
+            self._geodesic_grid.search_zones(lev_spherical_caps, search_result, max_search_level)
 
             for lev in range(max_search_level + 1):
                 # print('Inside iterator')
-                inside_iterator = GeodesicSearchInsideIterator(self.search_result, lev)
+                inside_iterator = GeodesicSearchInsideIterator(search_result, lev)
                 stars = self._select_stars_from_zones(inside_iterator, lev, lm_stars, field_rect3, cos_radius)
                 if len(stars) > 0:
                     tmp_arr.extend(stars)
 
                 # print('Border iterator')
-                border_iterator = GeodesicSearchBorderIterator(self.search_result, lev)
+                border_iterator = GeodesicSearchBorderIterator(search_result, lev)
                 stars = self._select_stars_from_zones(border_iterator, lev, lm_stars, field_rect3, cos_radius)
                 if len(stars) > 0:
                     tmp_arr.extend(stars)
