@@ -55,6 +55,8 @@ class SolarSystemBodyObject:
     phase: float
     distance: float
     ring_tilt: Optional[float] = None
+    central_meridian: Optional[float] = None
+    sub_earth_lat: Optional[float] = None
 
 
 @dataclass(slots=True)
