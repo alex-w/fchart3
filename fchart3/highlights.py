@@ -43,6 +43,7 @@ class HighlightDefinition:
     color: Color
     data: Sequence[HighlightRow]
     size: float = 1.0
+    show_labels: bool = False
 
 
 @dataclass(slots=True, eq=False)

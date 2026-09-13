@@ -46,6 +46,17 @@ class HighlightsRenderer(BaseRenderer):
                         gfx.line(x + r, y, x + r / 2, y)
                         gfx.line(x, y + r, x, y + r / 2)
                         gfx.line(x, y - r, x, y - r / 2)
+                        if hl_def.show_labels and label:
+                            label_r = r * 0.8875
+                            label_x = x - 0.3 * highlight_fh
+                            gfx.set_font(gfx.gi_font, highlight_fh, cfg.dso_label_font_style)
+                            self.draw_circular_object_label(ctx, label_x, y, label_r, label, fh=highlight_fh)
+                            if isinstance(hl_mag, (int, float)):
+                                label_mag = '{:.1f}m'.format(hl_mag)
+                                gfx.set_font(gfx.gi_font, highlight_fh * 0.8, cfg.dso_label_font_style)
+                                self.draw_circular_object_label(
+                                    ctx, label_x, y - 0.9 * highlight_fh, label_r, label_mag, -1, highlight_fh
+                                )
                         self.collect_visible_object(ctx, state, x, y, r, object_name)
                     elif hl_def.style == 'circle':
                         gfx.set_pen_rgb(hl_def.color)
